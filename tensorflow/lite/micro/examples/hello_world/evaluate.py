@@ -96,16 +96,36 @@ def get_tflm_prediction(model_path, x_values):
   # Create the tflm interpreter
   tflm_interpreter = runtime.Interpreter.from_file(model_path)
 
-  input_shape = np.array(tflm_interpreter.get_input_details(0).get('shape'))
+  input_details = tflm_interpreter.get_input_details(0)
+  output_details = tflm_interpreter.get_output_details(0)
+  input_shape = np.array(input_details.get('shape'))
+  input_type = input_details.get('dtype', np.float32)
 
   y_predictions = np.empty(x_values.size, dtype=np.float32)
 
   for i, x_value in enumerate(x_values):
-    y_predictions[i] = invoke_tflm_interpreter(input_shape,
-                                               tflm_interpreter,
-                                               x_value,
-                                               input_index=0,
-                                               output_index=0)
+    if input_type == np.int8:
+      # Quantize float input to int8
+      input_scale = input_details['quantization_parameters']['scales'][0]
+      input_zero_point = input_details['quantization_parameters']['zero_points'][0]
+      int8_val = int(round(x_value / input_scale + input_zero_point))
+      int8_val = max(-128, min(127, int8_val))
+      input_data = np.reshape(np.array(int8_val, dtype=np.int8), input_shape)
+    else:
+      input_data = np.reshape(x_value, input_shape)
+
+    tflm_interpreter.set_input(input_data, 0)
+    tflm_interpreter.invoke()
+    output = np.reshape(tflm_interpreter.get_output(0), -1)[0]
+
+    if input_type == np.int8:
+      # Dequantize int8 output to float
+      output_scale = output_details['quantization_parameters']['scales'][0]
+      output_zero_point = output_details['quantization_parameters']['zero_points'][0]
+      y_predictions[i] = (int(output) - output_zero_point) * output_scale
+    else:
+      y_predictions[i] = output
+
   return y_predictions
 
 
@@ -126,50 +146,154 @@ def get_tflite_prediction(model_path, x_values):
   input_details = tflite_interpreter.get_input_details()[0]
   output_details = tflite_interpreter.get_output_details()[0]
   input_shape = np.array(input_details.get('shape'))
+  input_type = input_details.get('dtype', np.float32)
 
   y_predictions = np.empty(x_values.size, dtype=np.float32)
 
   for i, x_value in enumerate(x_values):
-    y_predictions[i] = invoke_tflite_interpreter(
-        input_shape,
-        tflite_interpreter,
-        x_value,
-        input_details['index'],
-        output_details['index'],
-    )
+    if input_type == np.int8:
+      # Quantize float input to int8
+      input_scale = input_details['quantization_parameters']['scales'][0]
+      input_zero_point = input_details['quantization_parameters']['zero_points'][0]
+      int8_val = int(round(x_value / input_scale + input_zero_point))
+      int8_val = max(-128, min(127, int8_val))
+      input_data = np.reshape(np.array(int8_val, dtype=np.int8), input_shape)
+    else:
+      input_data = np.reshape(x_value, input_shape)
+
+    tflite_interpreter.set_tensor(input_details['index'], input_data)
+    tflite_interpreter.invoke()
+    output = tflite_interpreter.get_tensor(output_details['index'])
+
+    if input_type == np.int8:
+      # Dequantize int8 output to float
+      output_scale = output_details['quantization_parameters']['scales'][0]
+      output_zero_point = output_details['quantization_parameters']['zero_points'][0]
+      y_predictions[i] = (int(output.flatten()[0]) - output_zero_point) * output_scale
+    else:
+      y_predictions[i] = np.reshape(output, -1)[0]
+
   return y_predictions
 
 
+def get_model_info(model_path):
+  """Get model information: size, input/output details, quantization params."""
+  model_size = os.path.getsize(model_path)
+  info = {'size': model_size, 'size_kb': model_size / 1024.0}
+
+  # Use TFLM to get input/output details
+  tflm_interpreter = runtime.Interpreter.from_file(model_path)
+  input_details = tflm_interpreter.get_input_details(0)
+  output_details = tflm_interpreter.get_output_details(0)
+
+  info['input_shape'] = input_details.get('shape', [])
+  info['input_dtype'] = str(input_details.get('dtype', '?'))
+  info['output_shape'] = output_details.get('shape', [])
+  info['output_dtype'] = str(output_details.get('dtype', '?'))
+
+  quant_in = input_details.get('quantization_parameters', {})
+  quant_out = output_details.get('quantization_parameters', {})
+
+  if quant_in.get('scales') is not None and len(quant_in['scales']) > 0:
+    info['input_scale'] = quant_in['scales'][0]
+    info['input_zero_point'] = quant_in['zero_points'][0]
+  if quant_out.get('scales') is not None and len(quant_out['scales']) > 0:
+    info['output_scale'] = quant_out['scales'][0]
+    info['output_zero_point'] = quant_out['zero_points'][0]
+
+  return info
+
+
 def main(_):
-  model_path = os.path.join(_PREFIX_PATH, 'models/hello_world_float.tflite')
+  float_model_path = os.path.join(_PREFIX_PATH,
+                                  'models/hello_world_float.tflite')
+  int8_model_path = os.path.join(_PREFIX_PATH,
+                                 'models/hello_world_int8.tflite')
 
   x_values = generate_random_float_input()
 
   # Calculate the corresponding cosine values
   y_true_values = np.cos(x_values).astype(np.float32)
 
-  plt.figure(figsize=(10, 6))
-  plt.title('Cosine Function Prediction')
-  plt.xlabel('Input (x)')
-  plt.ylabel('Output (y)')
+  # Get model info
+  float_info = get_model_info(float_model_path)
+  int8_info = get_model_info(int8_model_path)
+
+  fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+  # --- Float model plot ---
+  ax1 = axes[0]
+  float_title = (f"Float Model  (size: {float_info['size_kb']:.1f} KB)\n"
+                 f"input: {float_info['input_dtype']} {float_info['input_shape']}, "
+                 f"output: {float_info['output_dtype']} {float_info['output_shape']}")
+  ax1.set_title(float_title, fontsize=10)
+  ax1.set_xlabel('Input (x)')
+  ax1.set_ylabel('Output (y)')
 
   if _USE_TFLITE_INTERPRETER.value:
-    y_predictions = get_tflite_prediction(model_path, x_values)
-    plt.plot(x_values, y_predictions, 'b.', label='TFLite Prediction', markersize=2)
-    logging.info('TFLite predictions: min=%f, max=%f, mean=%f',
-                 np.min(y_predictions), np.max(y_predictions), np.mean(y_predictions))
+    y_float_pred = get_tflite_prediction(float_model_path, x_values)
+    ax1.plot(x_values, y_float_pred, 'b.', label='TFLite Float', markersize=2)
+    logging.info('TFLite float predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_float_pred), np.max(y_float_pred),
+                 np.mean(y_float_pred))
   else:
-    y_predictions = get_tflm_prediction(model_path, x_values)
-    plt.plot(x_values, y_predictions, 'b.', label='TFLM Prediction', markersize=2)
-    logging.info('TFLM predictions: min=%f, max=%f, mean=%f',
-                 np.min(y_predictions), np.max(y_predictions), np.mean(y_predictions))
+    y_float_pred = get_tflm_prediction(float_model_path, x_values)
+    ax1.plot(x_values, y_float_pred, 'b.', label='TFLM Float', markersize=2)
+    logging.info('TFLM float predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_float_pred), np.max(y_float_pred),
+                 np.mean(y_float_pred))
+
+  # Compute MSE for float model
+  float_mse = np.mean((y_true_values - y_float_pred) ** 2)
+  ax1.plot(x_values, y_true_values, 'r.', label='Actual Cosine', markersize=2)
+  ax1.legend(loc='upper right', fontsize=8)
+  ax1.grid(True, alpha=0.3)
+  ax1.text(0.02, 0.02, f'MSE: {float_mse:.6f}', transform=ax1.transAxes,
+           fontsize=9, verticalalignment='bottom',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+  # --- Int8 quantized model plot ---
+  ax2 = axes[1]
+  int8_title = (f"Int8 Quantized Model  (size: {int8_info['size_kb']:.1f} KB)\n"
+                f"input: {int8_info['input_dtype']} {int8_info['input_shape']}, "
+                f"output: {int8_info['output_dtype']} {int8_info['output_shape']}")
+  if 'input_scale' in int8_info:
+    int8_title += (f"\nscale: in={int8_info['input_scale']:.4f}/"
+                   f"out={int8_info['output_scale']:.4f}, "
+                   f"zp: in={int8_info['input_zero_point']}/"
+                   f"out={int8_info['output_zero_point']}")
+  ax2.set_title(int8_title, fontsize=10)
+  ax2.set_xlabel('Input (x)')
+  ax2.set_ylabel('Output (y)')
+
+  if _USE_TFLITE_INTERPRETER.value:
+    y_int8_pred = get_tflite_prediction(int8_model_path, x_values)
+    ax2.plot(x_values, y_int8_pred, 'g.', label='TFLite Int8', markersize=2)
+    logging.info('TFLite int8 predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_int8_pred), np.max(y_int8_pred),
+                 np.mean(y_int8_pred))
+  else:
+    y_int8_pred = get_tflm_prediction(int8_model_path, x_values)
+    ax2.plot(x_values, y_int8_pred, 'g.', label='TFLM Int8', markersize=2)
+    logging.info('TFLM int8 predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_int8_pred), np.max(y_int8_pred),
+                 np.mean(y_int8_pred))
+
+  # Compute MSE for int8 model
+  int8_mse = np.mean((y_true_values - y_int8_pred) ** 2)
+  ax2.plot(x_values, y_true_values, 'r.', label='Actual Cosine', markersize=2)
+  ax2.legend(loc='upper right', fontsize=8)
+  ax2.grid(True, alpha=0.3)
+  ax2.text(0.02, 0.02, f'MSE: {int8_mse:.6f}', transform=ax2.transAxes,
+           fontsize=9, verticalalignment='bottom',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
   logging.info('True cosine values: min=%f, max=%f, mean=%f',
-               np.min(y_true_values), np.max(y_true_values), np.mean(y_true_values))
+               np.min(y_true_values), np.max(y_true_values),
+               np.mean(y_true_values))
+  logging.info('Float model MSE: %f, Int8 model MSE: %f', float_mse, int8_mse)
 
-  plt.plot(x_values, y_true_values, 'r.', label='Actual Cosine', markersize=2)
-  plt.legend()
-  plt.grid(True, alpha=0.3)
+  plt.tight_layout()
 
   # Either save or display the plot
   if _SAVE_PLOT.value:

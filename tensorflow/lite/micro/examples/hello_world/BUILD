@@ -46,7 +46,10 @@ tflm_cc_test(
 py_binary(
     name = "evaluate",
     srcs = ["evaluate.py"],
-    data = ["//tensorflow/lite/micro/examples/hello_world/models:hello_world_float.tflite"],
+    data = [
+        "//tensorflow/lite/micro/examples/hello_world/models:hello_world_float.tflite",
+        "//tensorflow/lite/micro/examples/hello_world/models:hello_world_int8.tflite",
+    ],
     deps = [
         requirement("absl_py"),
         requirement("numpy"),

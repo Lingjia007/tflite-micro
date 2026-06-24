@@ -22,3 +22,12 @@ py_binary(
         requirement("tensorflow"),
     ],
 )
+
+py_binary(
+    name = "get_quant_params",
+    srcs = ["get_quant_params.py"],
+    deps = [
+        requirement("numpy"),
+        requirement("tensorflow"),
+    ],
+)
