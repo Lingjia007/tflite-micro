@@ -12,3 +12,13 @@ py_binary(
         "//python/tflite_micro:runtime",
     ],
 )
+
+py_binary(
+    name = "ptq_direct",
+    srcs = ["ptq_direct.py"],
+    deps = [
+        requirement("absl_py"),
+        requirement("numpy"),
+        requirement("tensorflow"),
+    ],
+)

@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import os
+import matplotlib.pyplot as plt
 from absl import app
 from absl import flags
 from absl import logging
 import numpy as np
-import matplotlib.pyplot as plt
 from tflite_micro.python.tflite_micro import runtime
 
 OpResolverType = None
@@ -40,6 +40,12 @@ _USE_TFLITE_INTERPRETER = flags.DEFINE_bool(
     'use_tflite',
     False,
     'Inference with the TF Lite interpreter instead of the TFLM interpreter',
+)
+
+_SAVE_PLOT = flags.DEFINE_bool(
+    'save_plot',
+    False,
+    'Save the plot to file instead of displaying it',
 )
 
 _PREFIX_PATH = os.path.dirname(__file__)
@@ -67,7 +73,7 @@ def invoke_tflite_interpreter(input_shape, interpreter, x_value, input_index,
 # Generate a list of 1000 random floats in the range of 0 to 2*pi.
 def generate_random_int8_input(sample_count=1000):
   # Generate a uniformly distributed set of random numbers in the range from
-  # 0 to 2π, which covers a complete sine wave oscillation
+  # 0 to 2π, which covers a complete cosine wave oscillation
   np.random.seed(42)
   x_values = np.random.uniform(low=0, high=2 * np.pi,
                                size=sample_count).astype(np.int8)
@@ -77,7 +83,7 @@ def generate_random_int8_input(sample_count=1000):
 # Generate a list of 1000 random floats in the range of 0 to 2*pi.
 def generate_random_float_input(sample_count=1000):
   # Generate a uniformly distributed set of random numbers in the range from
-  # 0 to 2π, which covers a complete sine wave oscillation
+  # 0 to 2π, which covers a complete cosine wave oscillation
   np.random.seed(42)
   x_values = np.random.uniform(low=0, high=2 * np.pi,
                                size=sample_count).astype(np.float32)
@@ -139,19 +145,44 @@ def main(_):
 
   x_values = generate_random_float_input()
 
-  # Calculate the corresponding sine values
-  y_true_values = np.sin(x_values).astype(np.float32)
+  # Calculate the corresponding cosine values
+  y_true_values = np.cos(x_values).astype(np.float32)
+
+  plt.figure(figsize=(10, 6))
+  plt.title('Cosine Function Prediction')
+  plt.xlabel('Input (x)')
+  plt.ylabel('Output (y)')
 
   if _USE_TFLITE_INTERPRETER.value:
     y_predictions = get_tflite_prediction(model_path, x_values)
-    plt.plot(x_values, y_predictions, 'b.', label='TFLite Prediction')
+    plt.plot(x_values, y_predictions, 'b.', label='TFLite Prediction', markersize=2)
+    logging.info('TFLite predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_predictions), np.max(y_predictions), np.mean(y_predictions))
   else:
     y_predictions = get_tflm_prediction(model_path, x_values)
-    plt.plot(x_values, y_predictions, 'b.', label='TFLM Prediction')
+    plt.plot(x_values, y_predictions, 'b.', label='TFLM Prediction', markersize=2)
+    logging.info('TFLM predictions: min=%f, max=%f, mean=%f',
+                 np.min(y_predictions), np.max(y_predictions), np.mean(y_predictions))
 
-  plt.plot(x_values, y_true_values, 'r.', label='Actual values')
+  logging.info('True cosine values: min=%f, max=%f, mean=%f',
+               np.min(y_true_values), np.max(y_true_values), np.mean(y_true_values))
+
+  plt.plot(x_values, y_true_values, 'r.', label='Actual Cosine', markersize=2)
   plt.legend()
-  plt.show()
+  plt.grid(True, alpha=0.3)
+
+  # Either save or display the plot
+  if _SAVE_PLOT.value:
+    output_dir = '/tmp'
+    if _USE_TFLITE_INTERPRETER.value:
+      output_file = os.path.join(output_dir, 'hello_world_tflite_cosine.png')
+    else:
+      output_file = os.path.join(output_dir, 'hello_world_tflm_cosine.png')
+    plt.savefig(output_file, dpi=100, bbox_inches='tight')
+    plt.close()
+    logging.info('Plot saved to %s', output_file)
+  else:
+    plt.show()
 
 
 if __name__ == '__main__':

@@ -38,19 +38,19 @@ flags.DEFINE_boolean("save_tf_model", False,
 
 def get_data():
   """
-  The code will generate a set of random `x` values,calculate their sine
+  The code will generate a set of random `x` values,calculate their cosine
   values.
   """
   # Generate a uniformly distributed set of random numbers in the range from
-  # 0 to 2π, which covers a complete sine wave oscillation
+  # 0 to 2π, which covers a complete cosine wave oscillation
   x_values = np.random.uniform(low=0, high=2 * math.pi,
                                size=1000).astype(np.float32)
 
   # Shuffle the values to guarantee they're not in order
   np.random.shuffle(x_values)
 
-  # Calculate the corresponding sine values
-  y_values = np.sin(x_values).astype(np.float32)
+  # Calculate the corresponding cosine values
+  y_values = np.cos(x_values).astype(np.float32)
 
   return (x_values, y_values)
 
@@ -120,7 +120,7 @@ def train_model(epochs, x_values, y_values):
             verbose=2)
 
   if FLAGS.save_tf_model:
-    model.save(FLAGS.save_dir, save_format="tf")
+    model.export(FLAGS.save_dir)
     logging.info("TF model saved to %s", FLAGS.save_dir)
 
   return model
