@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =============================================================================
-"""hello_world model training for sinwave recognition
+"""hello_world model training for wave recognition
 
 Run:
 `bazel build tensorflow/lite/micro/examples/hello_world:train`
+
+Train cosine model (default):
 `bazel-bin/tensorflow/lite/micro/examples/hello_world/train --save_tf_model --save_dir=/tmp/model_created/`
+
+Train sine model:
+`bazel-bin/tensorflow/lite/micro/examples/hello_world/train --save_tf_model --save_dir=/tmp/model_created/ --function_type=sin`
+
+Customize epochs:
+`bazel-bin/tensorflow/lite/micro/examples/hello_world/train --save_tf_model --save_dir=/tmp/model_created/ --epochs=2000`
 """
 import math
 import os
@@ -34,23 +42,28 @@ flags.DEFINE_string("save_dir", "/tmp/hello_world_models",
                     "the directory to save the trained model.")
 flags.DEFINE_boolean("save_tf_model", False,
                      "store the original unconverted tf model.")
+flags.DEFINE_string("function_type", "cos",
+                    "the function to train: 'cos' for cosine, 'sin' for sine. Default is 'cos'.")
 
 
 def get_data():
   """
-  The code will generate a set of random `x` values,calculate their cosine
-  values.
+  The code will generate a set of random `x` values, calculate their cosine
+  or sine values based on function_type flag.
   """
   # Generate a uniformly distributed set of random numbers in the range from
-  # 0 to 2π, which covers a complete cosine wave oscillation
+  # 0 to 2π, which covers a complete wave oscillation
   x_values = np.random.uniform(low=0, high=2 * math.pi,
                                size=1000).astype(np.float32)
 
   # Shuffle the values to guarantee they're not in order
   np.random.shuffle(x_values)
 
-  # Calculate the corresponding cosine values
-  y_values = np.cos(x_values).astype(np.float32)
+  # Calculate the corresponding function values based on function_type
+  if FLAGS.function_type == "sin":
+    y_values = np.sin(x_values).astype(np.float32)
+  else:  # Default is cosine
+    y_values = np.cos(x_values).astype(np.float32)
 
   return (x_values, y_values)
 
@@ -58,12 +71,16 @@ def get_data():
 def create_model() -> tf.keras.Model:
   model = tf.keras.Sequential()
 
-  # First layer takes a scalar input and feeds it through 16 "neurons". The
+  # First layer takes a scalar input and feeds it through 32 "neurons". The
   # neurons decide whether to activate based on the 'relu' activation function.
-  model.add(tf.keras.layers.Dense(16, activation='relu', input_shape=(1, )))
+  # Increased from 16 to 32 neurons for better learning capacity.
+  model.add(tf.keras.layers.Dense(32, activation='relu', input_shape=(1, )))
 
-  # The new second and third layer will help the network learn more complex
-  # representations
+  # Second layer with 32 neurons to help the network learn more complex
+  # representations. Increased from 16 to 32 neurons.
+  model.add(tf.keras.layers.Dense(32, activation='relu'))
+
+  # Third layer with 16 neurons for additional complexity
   model.add(tf.keras.layers.Dense(16, activation='relu'))
 
   # Final layer is a single neuron, since we want to output a single value
@@ -132,9 +149,10 @@ def main(_):
 
   # Convert and save the model to .tflite
   tflite_model = convert_tflite_model(trained_model)
+  model_name = f"hello_world_{FLAGS.function_type}_float.tflite"
   save_tflite_model(tflite_model,
                     FLAGS.save_dir,
-                    model_name="hello_world_float.tflite")
+                    model_name=model_name)
 
 
 if __name__ == "__main__":

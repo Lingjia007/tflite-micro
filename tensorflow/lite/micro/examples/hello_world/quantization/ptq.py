@@ -28,6 +28,9 @@ Then we can run the ptq script to convert the float model to quant model as foll
 Note that we are using the directory of the TF model as the source_model_dir here.
 The quant model (named hello_world_int8.tflite) will be created inside the target_dir.
 `bazel-bin/tensorflow/lite/micro/examples/hello_world/quantization/ptq  --source_model_dir=/tmp/float_model --target_dir=/tmp/quant_model/`
+
+You can also customize the number of samples used for quantization parameter calculation:
+`bazel-bin/tensorflow/lite/micro/examples/hello_world/quantization/ptq  --source_model_dir=/tmp/float_model --target_dir=/tmp/quant_model/ --num_quant_samples=1000`
 """
 import math
 import os
@@ -44,6 +47,8 @@ flags.DEFINE_string("source_model_dir", "/tmp/float_model/",
                     "the directory where the trained model can be found.")
 flags.DEFINE_string("target_dir", "/tmp/quant_model",
                     "the directory to save the quant model.")
+flags.DEFINE_integer("num_quant_samples", 500,
+                     "number of samples to use for quantization parameter calculation.")
 
 
 def get_data():
@@ -76,20 +81,21 @@ def save_tflite_model(tflite_model, target_dir, model_name):
   logging.info("Tflite model saved to %s", target_dir)
 
 
-def convert_quantized_tflite_model(source_model_dir, x_values):
+def convert_quantized_tflite_model(source_model_dir, x_values, num_samples):
   """Convert the save TF model to tflite model, then save it as .tflite
     flatbuffer format
 
     Args:
         source_model_dir (tf.keras.Model): the trained hello_world flaot Model dir
         x_train (numpy.array): list of the training data
+        num_samples (int): number of samples for quantization
 
     Returns:
         The converted model in serialized format.
   """
 
   # Convert the model to the TensorFlow Lite format with quantization
-  def representative_dataset(num_samples=500):
+  def representative_dataset():
     for i in range(num_samples):
       yield [x_values[i].reshape(1, 1)]
 
@@ -106,7 +112,7 @@ def convert_quantized_tflite_model(source_model_dir, x_values):
 def main(_):
   x_values = get_data()
   quantized_tflite_model = convert_quantized_tflite_model(
-      FLAGS.source_model_dir, x_values)
+      FLAGS.source_model_dir, x_values, FLAGS.num_quant_samples)
   save_tflite_model(quantized_tflite_model,
                     FLAGS.target_dir,
                     model_name="hello_world_int8.tflite")
